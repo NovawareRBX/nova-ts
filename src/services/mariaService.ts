@@ -1,23 +1,35 @@
 import mariadb from "mariadb";
 
-let pool: mariadb.Pool;
 
-function initalise(): void {
-	console.log("Initialising MariaDB pool");
-	pool = mariadb.createPool({
-		host: "172.18.0.4",
-		port: 3306,
-		user: process.env.MARIADB_USER,
-		password: process.env.MARIADB_PASSWORD,
-		database: "NovawareDiscord",
-		connectionLimit: 30,
-	});
-}
+let pools: { [key: string]: mariadb.Pool } = {};
+type DatabaseName = "NovawareDiscord" | "Game1";
 
-export async function getMariaConnection() {
-	if (!pool) {
-		initalise();
+const credentials = {
+	NovawareDiscord: [process.env.DISCORD_MARIADB_USER, process.env.DISCORD_MARIADB_PASSWORD],
+	Game1: [process.env.GAME1_MARIADB_USER, process.env.GAME1_MARIADB_PASSWORD],
+};
+
+function initializePool(database: DatabaseName): void {
+	if (credentials[database] === undefined) {
+		console.error(`No credentials found for ${database}`);
+		return;
 	}
 
-	return pool.getConnection();
+	console.log(`Initialising MariaDB pool for ${database}`);
+	pools[database] = mariadb.createPool({
+		host: "proxysql",
+		port: 6033,
+		user: credentials[database][0],
+		password: credentials[database][1],
+		database: database,
+		connectionLimit: 30,
+	});
+	console.log(`Initialised MariaDB pool for ${database}`);
+}
+
+export async function getMariaConnection(database: DatabaseName = "NovawareDiscord") {
+	if (!pools[database]) {
+		initializePool(database);
+	}
+	return pools[database].getConnection();
 }

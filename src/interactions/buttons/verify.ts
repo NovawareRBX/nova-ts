@@ -5,7 +5,9 @@ import {
 	ButtonStyle,
 	EmbedBuilder,
 	Guild,
+	Snowflake,
 	ThreadChannel,
+	User,
 } from "discord.js";
 import { ButtonComponent, Discord } from "discordx";
 import { getMariaConnection } from "../../services/mariaService.js";
@@ -17,6 +19,8 @@ import getAccountsWithFingerprint from "../../utils/getAccountsWithFingerprint.j
 import { PoolConnection } from "mariadb";
 import scanAndBanFingerprint from "../../utils/scanAndBanFingerprint.js";
 import updateMemberRoles from "../../utils/updateMemberRoles.js";
+import { errorEmbed } from "../../utils/embed.js";
+import getAccountsWithUserId from "../../utils/getAccountsWithUserId.js";
 
 @Discord()
 class verify {
@@ -26,108 +30,117 @@ class verify {
 		const redis = await getRedisConnection();
 		let pendingLink = await redis.hGet("RobloxOAuth", interaction.user.id);
 
-		if (!pendingLink) {
-			let config = await client.discovery(
-				new URL("https://apis.roblox.com/oauth/.well-known/openid-configuration"),
-				process.env.ROAUTH_CLIENT_ID as string,
-				process.env.ROAUTH_CLIENT_SECRET as string,
-			);
-			const urlId = randomBytes(4).toString("hex").slice(0, 7);
-			const nonce = client.randomNonce();
-			const authUrl = client.buildAuthorizationUrl(config, {
-				redirect_uri: "https://auth.noxirity.com/",
-				response_type: "code",
-				scope: "openid profile group:read",
-				id_token_signed_response_alg: "ES256",
-				nonce: nonce,
-				state: urlId,
-			});
-
-			const b64 = Buffer.from(
-				JSON.stringify({
-					discordId: interaction.user.id,
-					state: urlId,
-					nonce: nonce,
-					date: Date.now(),
-					urlId: urlId,
-					url: authUrl,
-				}),
-			).toString("base64");
-
-			await redis.hSet("RobloxOAuth", interaction.user.id, b64);
-			await redis.hSet("RobloxOAuthLinkShortener", urlId, b64);
-
-			pendingLink = b64;
-		}
-
-		const data = JSON.parse(Buffer.from(pendingLink, "base64").toString("utf-8"));
-		const url = `https://auth.noxirity.com/verify/${data.urlId}/`;
-
-		await interaction.reply({
-			embeds: [
-				new EmbedBuilder()
-					.setDescription(
-						`### <a:loading:1279856922522030162> Waiting for verification...\n\nClick the link below to verify your account with Roblox.`,
-					)
-					.setColor("#c83c79"),
-			],
-			components: [
-				new ActionRowBuilder<ButtonBuilder>().addComponents(
-					new ButtonBuilder().setURL(url).setStyle(ButtonStyle.Link).setLabel("Verify"),
-				),
-			],
-			ephemeral: true,
-		});
-
-		const waitForPendingLink = (userId: string): Promise<boolean> => {
-			return new Promise((resolve, reject) => {
-				const interval = setInterval(async () => {
-					const pendingLink = await redis.hGet("RobloxOAuth", userId);
-					if (!pendingLink) {
-						clearInterval(interval);
-						clearTimeout(timeout);
-						resolve(true);
-					}
-				}, 1000);
-
-				const timeout = setTimeout(() => {
-					clearInterval(interval);
-					resolve(true);
-				}, 180000); // 2 minutes
-			});
-		};
-
-		const success = await waitForPendingLink(interaction.user.id);
-		if (!success) {
-			connection.release();
-			return interaction.editReply({
-				embeds: [
-					new EmbedBuilder()
-						.setDescription(
-							`### <:close:1252438815189241897> You took too long!\n\nSorry, but you took too long to verify your account. Please try again.`,
-						)
-						.setColor("#c83c3c"),
-				],
-				components: [],
-			});
-		}
-
-		const [oauth_data] = await connection.query("SELECT * FROM `roblox_oauth_data` WHERE `discord_id` = ?", [
+		let [oauth_data] = await connection.query("SELECT * FROM `roblox_oauth_data` WHERE `discord_id` = ?", [
 			interaction.user.id,
 		]);
 
-		if (!oauth_data) {
-			connection.release();
-			return interaction.editReply({
+		if (!oauth_data || oauth_data.proxy_check.vpn === "yes" || oauth_data.proxy_check.proxy === "yes") {
+			// allow the user to reverify if they're not verified or if they're using a VPN
+			if (!pendingLink) {
+				let config = await client.discovery(
+					new URL("https://apis.roblox.com/oauth/.well-known/openid-configuration"),
+					process.env.ROAUTH_CLIENT_ID as string,
+					process.env.ROAUTH_CLIENT_SECRET as string,
+				);
+				const urlId = randomBytes(4).toString("hex").slice(0, 7);
+				const nonce = client.randomNonce();
+				const authUrl = client.buildAuthorizationUrl(config, {
+					redirect_uri: "https://auth.noxirity.com/",
+					response_type: "code",
+					scope: "openid profile group:read",
+					id_token_signed_response_alg: "ES256",
+					nonce: nonce,
+					state: urlId,
+				});
+
+				const b64 = Buffer.from(
+					JSON.stringify({
+						discordId: interaction.user.id,
+						state: urlId,
+						nonce: nonce,
+						date: Date.now(),
+						urlId: urlId,
+						url: authUrl,
+					}),
+				).toString("base64");
+
+				await redis.hSet("RobloxOAuth", interaction.user.id, b64);
+				await redis.hSet("RobloxOAuthLinkShortener", urlId, b64);
+
+				pendingLink = b64;
+			}
+
+			const data = JSON.parse(Buffer.from(pendingLink, "base64").toString("utf-8"));
+			const url = `https://auth.noxirity.com/verify/${data.urlId}/`;
+
+			await interaction.reply({
 				embeds: [
 					new EmbedBuilder()
 						.setDescription(
-							`### <:nova_error:1278474560026706020> That wasn't meant to happen.\n\n Something went wrong while trying to verify your account. Please try again.`,
+							`### <a:loading:1279856922522030162> Waiting for verification...\n\nClick the link below to verify your account with Roblox.`,
 						)
-						.setColor("#f76f6e"),
+						.setColor("#c83c79"),
 				],
-				components: [],
+				components: [
+					new ActionRowBuilder<ButtonBuilder>().addComponents(
+						new ButtonBuilder().setURL(url).setStyle(ButtonStyle.Link).setLabel("Verify"),
+					),
+				],
+				ephemeral: true,
 			});
+
+			const waitForPendingLink = (userId: string): Promise<boolean> => {
+				return new Promise((resolve, reject) => {
+					const interval = setInterval(async () => {
+						const pendingLink = await redis.hGet("RobloxOAuth", userId);
+						if (!pendingLink) {
+							clearInterval(interval);
+							clearTimeout(timeout);
+							resolve(true);
+						}
+					}, 1000);
+
+					const timeout = setTimeout(() => {
+						clearInterval(interval);
+						resolve(true);
+					}, 180000); // 2 minutes
+				});
+			};
+
+			const success = await waitForPendingLink(interaction.user.id);
+			if (!success) {
+				connection.release();
+				return interaction.editReply({
+					embeds: [
+						new EmbedBuilder()
+							.setDescription(
+								`### <:close:1252438815189241897> You took too long!\n\nSorry, but you took too long to verify your account. Please try again.`,
+							)
+							.setColor("#c83c3c"),
+					],
+					components: [],
+				});
+			}
+
+			[oauth_data] = await connection.query("SELECT * FROM `roblox_oauth_data` WHERE `discord_id` = ?", [
+				interaction.user.id,
+			]);
+
+			if (!oauth_data) {
+				connection.release();
+				return interaction.editReply({
+					embeds: [
+						new EmbedBuilder()
+							.setDescription(
+								`### <:nova_error:1278474560026706020> That wasn't meant to happen.\n\n Something went wrong while trying to verify your account. Please try again.`,
+							)
+							.setColor("#f76f6e"),
+					],
+					components: [],
+				});
+			}
+		} else {
+			await interaction.deferReply({ ephemeral: true });
 		}
 
 		// [[ LOADING EMBED IS NOT NECESSARY DUE TO HOW FAST THE VERIFICATION PROCESS IS ]]
@@ -141,6 +154,15 @@ class verify {
 		// 	],
 		// 	components: [],
 		// });
+		for (const key in oauth_data) {
+			if (typeof oauth_data[key] === "string") {
+				try {
+					oauth_data[key] = JSON.parse(oauth_data[key]);
+				} catch (e) {
+					// If parsing fails, keep the original string
+				}
+			}
+		}
 
 		const blacklisted_fingerprint: [] = await connection.query(
 			"SELECT * FROM `blacklisted_fingerprints` WHERE `fingerprint` = ?",
@@ -171,23 +193,15 @@ class verify {
 		}
 
 		if (oauth_data.proxy_check.vpn === "yes" || oauth_data.proxy_check.proxy === "yes") {
-			connection.release();
-			return interaction.editReply({
-				embeds: [
-					new EmbedBuilder()
-						.setDescription(
-							`### <:warn:1280263046173819067> Please verify with your VPN disabled.\nWe don't permit the use of VPNs during verification to ensure you're not engaging in ban evasion or other suspicious activities. Rest assured, your IP address is not stored during the verification process. If you have privacy concerns, please review our policies for more details.\n\n> https://noxirity.com/privacy/\n> https://noxirity.com/terms/\n\n> **Not using a VPN?**\n> If you're not using a VPN, please try again. If you continue to have issues, please contact our support team.`,
-						)
-						.setColor("#E15B24"),
-				],
-				components: [],
-			});
+			NotifyVPNVerification(oauth_data, interaction.user.id);
 		}
 
 		const private_fingerprint = oauth_data.private_fingerprint;
-		NotifyBannedAccounts(connection, private_fingerprint);
-
+		await NotifyBannedAccounts(connection, private_fingerprint);
+		await NotifyMatchingAccounts(connection, oauth_data.claims_cache.sub);
 		updateMemberRoles(interaction.user.id);
+
+		connection.release();
 
 		return interaction.editReply({
 			embeds: [
@@ -271,7 +285,6 @@ async function NotifyBannedAccounts(connection: PoolConnection, private_fingerpr
 	const matching_accounts = await getAccountsWithFingerprint(connection, private_fingerprint);
 
 	if (matching_accounts.length < 2) {
-		connection.release();
 		return;
 	}
 
@@ -320,6 +333,53 @@ async function NotifyBannedAccounts(connection: PoolConnection, private_fingerpr
 			),
 		],
 	});
+}
 
-	connection.release();
+async function NotifyMatchingAccounts(connection: PoolConnection, user_id: string) {
+	const matching_accounts = await getAccountsWithUserId(connection, user_id);
+
+	if (matching_accounts.length < 2) {
+		return;
+	}
+
+	const guild = discordClient.guilds.cache.get(process.env.GUILD_ID as string) as Guild;
+	let string = "";
+
+	console.log(matching_accounts);
+
+	for (const account of matching_accounts) {
+		try {
+			string += `\n[${account.claims_cache.preferred_username}](<https://www.roblox.com/users/${account.claims_cache.sub}/profile>) | \`${account.discord_id}\``;
+		} catch (error) {
+			string += `\n[${account.claims_cache.preferred_username}](<https://www.roblox.com/users/${account.claims_cache.sub}/profile>) | \`${account.discord_id}\``;
+			continue;
+		}
+	}
+
+	const thread = (await guild.channels.fetch("1280230894376063109")) as ThreadChannel;
+	thread.send({
+		embeds: [
+			new EmbedBuilder()
+				.setDescription(
+					`### <:warn:1280263046173819067> Matching Accounts Detected!\n\nI've detected multiple accounts with the same Roblox user ID, please review the accounts below and take action if necessary.\n${string}`,
+				)
+				.setColor("#E15B24"),
+		],
+	});
+}
+
+async function NotifyVPNVerification(oauth_data: any, user_id: Snowflake) {
+	const guild = discordClient.guilds.cache.get(process.env.GUILD_ID as string) as Guild;
+	const user = await guild.members.fetch(user_id);
+	const thread = (await guild.channels.fetch("1280230894376063109")) as ThreadChannel;
+
+	thread.send({
+		embeds: [
+			new EmbedBuilder()
+				.setDescription(
+					`### <:warn:1280263046173819067> VPN Detected!\n\nI've detected that ${user} is using a VPN to connect to Novaware. Please review the account below and take action if necessary.\n\n[${oauth_data.claims_cache.preferred_username}](<https://www.roblox.com/users/${oauth_data.claims_cache.sub}/profile>) | \`${user_id}\`\n\n\`\`\`json\n${JSON.stringify(oauth_data.proxy_check, null, 2)}\n\`\`\``,
+				)
+				.setColor("#E15B24"),
+		],
+	});
 }

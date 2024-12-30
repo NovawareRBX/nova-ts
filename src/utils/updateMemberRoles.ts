@@ -6,7 +6,12 @@ import { client as discordClient } from "../index.js";
 export default async function (user_id: string): Promise<void> {
 	const guild = discordClient.guilds.cache.get(process.env.GUILD_ID as string);
 	if (!guild) return;
-	const member = (await guild.members.fetch(user_id)) as GuildMember;
+	let member: GuildMember | undefined = undefined;
+
+	try {
+		member = (await guild.members.fetch(user_id)) as GuildMember;
+	} catch (error) {}
+
 	if (!member) return;
 
 	const connection = await getMariaConnection();
@@ -14,6 +19,16 @@ export default async function (user_id: string): Promise<void> {
 
 	if (!data) {
 		return;
+	}
+
+	for (const key in data) {
+		if (typeof data[key] === "string") {
+			try {
+				data[key] = JSON.parse(data[key]);
+			} catch (e) {
+				// If parsing fails, keep the original string
+			}
+		}
 	}
 
 	const roblox_user_id = data.claims_cache.sub as string;
@@ -32,20 +47,22 @@ export default async function (user_id: string): Promise<void> {
 	const unverified_role = "1169775476756201633";
 	const staff_role = "1277325690664124428";
 
-	await member.roles.set([
-		...new Set([
-			...member.roles.cache
-				.filter(
-					(role) =>
-						role.id !== unverified_role &&
-						!bindings.some((bind: any) => bind.discord_id === role.id && bind.discord_id !== bind_role),
-				)
-				.map((role) => role.id),
-			bind_role,
-			verified_role,
-			...(group_rank > 3 ? [staff_role] : []),
-		]),
-	]);
+	try {
+		await member.roles.set([
+			...new Set([
+				...member.roles.cache
+					.filter(
+						(role) =>
+							role.id !== unverified_role &&
+							!bindings.some((bind: any) => bind.discord_id === role.id && bind.discord_id !== bind_role),
+					)
+					.map((role) => role.id),
+				bind_role,
+				verified_role,
+				...(group_rank > 3 ? [staff_role] : []),
+			]),
+		]);
+	} catch (error) {}
 
 	// update the user's nickname
 	try {

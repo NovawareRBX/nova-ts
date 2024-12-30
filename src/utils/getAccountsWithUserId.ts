@@ -3,7 +3,7 @@ import query from "./smartQuery.js";
 
 export default async function (
 	connection: PoolConnection,
-	fingerprint: string,
+	user_id: string,
 ): Promise<
 	{
 		discord_id: string;
@@ -16,8 +16,8 @@ export default async function (
 > {
 	const accounts = await query(
 		connection,
-		"SELECT discord_id, claims_cache, public_fingerprint FROM `roblox_oauth_data` WHERE `private_fingerprint` = ?",
-		[fingerprint],
+		"SELECT discord_id, claims_cache, public_fingerprint FROM `roblox_oauth_data` WHERE JSON_EXTRACT(claims_cache, '$.sub') = ?",
+		[user_id],
 	);
 
 	return accounts;

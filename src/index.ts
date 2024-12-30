@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { dirname, importx } from "@discordx/importer";
-import { IntentsBitField } from "discord.js";
+import { IntentsBitField, Partials } from "discord.js";
 import { Client } from "discordx";
 
 export const client = new Client({
@@ -13,7 +13,9 @@ export const client = new Client({
 		IntentsBitField.Flags.GuildMessageReactions,
 		IntentsBitField.Flags.GuildVoiceStates,
 		IntentsBitField.Flags.MessageContent,
+		IntentsBitField.Flags.DirectMessages,
 	],
+	partials: [Partials.Channel, Partials.Message],
 	silent: false,
 	simpleCommand: {
 		prefix: "!",
